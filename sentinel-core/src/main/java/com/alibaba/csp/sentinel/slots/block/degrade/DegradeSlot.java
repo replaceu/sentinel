@@ -28,55 +28,50 @@ import com.alibaba.csp.sentinel.slots.block.BlockException;
 import com.alibaba.csp.sentinel.slots.block.degrade.circuitbreaker.CircuitBreaker;
 import com.alibaba.csp.sentinel.spi.Spi;
 
-/**
- * A {@link ProcessorSlot} dedicates to circuit breaking.
- *
- * @author Carpenter Lee
- * @author Eric Zhao
- */
+//通过统计信息以及预设的规则，来做熔断降级
 @Spi(order = Constants.ORDER_DEGRADE_SLOT)
 public class DegradeSlot extends AbstractLinkedProcessorSlot<DefaultNode> {
 
-    @Override
-    public void entry(Context context, ResourceWrapper resourceWrapper, DefaultNode node, int count,
-                      boolean prioritized, Object... args) throws Throwable {
-        performChecking(context, resourceWrapper);
+	@Override
+	public void entry(Context context, ResourceWrapper resourceWrapper, DefaultNode node, int count, boolean prioritized, Object... args) throws Throwable {
+        //在触发后续slot前执行熔断的检查
+		performChecking(context, resourceWrapper);
+		fireEntry(context, resourceWrapper, node, count, prioritized, args);
+	}
 
-        fireEntry(context, resourceWrapper, node, count, prioritized, args);
-    }
+	void performChecking(Context context, ResourceWrapper r) throws BlockException {
+        //根据资源名称查找断路器circuitBreakers
+		List<CircuitBreaker> circuitBreakers = DegradeRuleManager.getCircuitBreakers(r.getName());
+		if (circuitBreakers == null || circuitBreakers.isEmpty()) { return; }
+        //遍历所有的断路器，判断是否让它他国
+		for (CircuitBreaker cb : circuitBreakers) {
+            //tryPass里面只做了状态检查，熔断是否关闭或者打开
+			if (!cb.tryPass(context)) { throw new DegradeException(cb.getRule().getLimitApp(), cb.getRule()); }
+		}
+	}
 
-    void performChecking(Context context, ResourceWrapper r) throws BlockException {
-        List<CircuitBreaker> circuitBreakers = DegradeRuleManager.getCircuitBreakers(r.getName());
-        if (circuitBreakers == null || circuitBreakers.isEmpty()) {
-            return;
-        }
-        for (CircuitBreaker cb : circuitBreakers) {
-            if (!cb.tryPass(context)) {
-                throw new DegradeException(cb.getRule().getLimitApp(), cb.getRule());
-            }
-        }
-    }
+	@Override
+	public void exit(Context context, ResourceWrapper r, int count, Object... args) {
+		Entry curEntry = context.getCurEntry();
+        //如果当前其他slot已经有了BlockException直接调用fireExit,不用继续走熔断逻辑了
+		if (curEntry.getBlockError() != null) {
+			fireExit(context, r, count, args);
+			return;
+		}
+        //根据资源名称查找断路器CircuitBreaker
+		List<CircuitBreaker> circuitBreakers = DegradeRuleManager.getCircuitBreakers(r.getName());
+		if (circuitBreakers == null || circuitBreakers.isEmpty()) {
+			fireExit(context, r, count, args);
+			return;
+		}
 
-    @Override
-    public void exit(Context context, ResourceWrapper r, int count, Object... args) {
-        Entry curEntry = context.getCurEntry();
-        if (curEntry.getBlockError() != null) {
-            fireExit(context, r, count, args);
-            return;
-        }
-        List<CircuitBreaker> circuitBreakers = DegradeRuleManager.getCircuitBreakers(r.getName());
-        if (circuitBreakers == null || circuitBreakers.isEmpty()) {
-            fireExit(context, r, count, args);
-            return;
-        }
+		if (curEntry.getBlockError() == null) {
+            //调用CircuitBreaker的onRequestComplete()方法
+			for (CircuitBreaker circuitBreaker : circuitBreakers) {
+				circuitBreaker.onRequestComplete(context);
+			}
+		}
 
-        if (curEntry.getBlockError() == null) {
-            // passed request
-            for (CircuitBreaker circuitBreaker : circuitBreakers) {
-                circuitBreaker.onRequestComplete(context);
-            }
-        }
-
-        fireExit(context, r, count, args);
-    }
+		fireExit(context, r, count, args);
+	}
 }

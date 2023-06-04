@@ -52,6 +52,7 @@ public class DynamicSentinelProperty<T> implements SentinelProperty<T> {
         RecordLog.info("[DynamicSentinelProperty] Config will be updated to: {}", newValue);
 
         value = newValue;
+        //通知各个观察者
         for (PropertyListener<T> listener : listeners) {
             listener.configUpdate(newValue);
         }
@@ -59,6 +60,7 @@ public class DynamicSentinelProperty<T> implements SentinelProperty<T> {
     }
 
     private boolean isEqual(T oldValue, T newValue) {
+        //如果两个值一样，则返回false，不修改
         if (oldValue == null && newValue == null) {
             return true;
         }

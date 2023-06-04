@@ -22,13 +22,5 @@ import okhttp3.Request;
  * @author zhaoyuguang
  */
 public interface OkHttpResourceExtractor {
-
-    /**
-     * Extracts the resource name from the HTTP request.
-     *
-     * @param request    HTTP request entity
-     * @param connection HTTP connection
-     * @return the resource name of current request
-     */
     String extract(Request request, Connection connection);
 }

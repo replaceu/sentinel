@@ -66,14 +66,15 @@ public abstract class AbstractCircuitBreaker implements CircuitBreaker {
 
     @Override
     public boolean tryPass(Context context) {
-        // Template implementation.
         if (currentState.get() == State.CLOSED) {
+            //关闭状态返回true，让请求通过
             return true;
         }
         if (currentState.get() == State.OPEN) {
-            // For half-open state we allow a request for probing.
+            //如果断路器开启，但是上一个请求距离现在已经过了重试间隔时间就开启半开状态
             return retryTimeoutArrived() && fromOpenToHalfOpen(context);
         }
+        //半开状态，直接返回false,拒绝请求
         return false;
     }
 
@@ -83,6 +84,7 @@ public abstract class AbstractCircuitBreaker implements CircuitBreaker {
     abstract void resetStat();
 
     protected boolean retryTimeoutArrived() {
+        //判断当前时间是否超过重试时间
         return TimeUtil.currentTimeMillis() >= nextRetryTimestamp;
     }
 
@@ -102,18 +104,18 @@ public abstract class AbstractCircuitBreaker implements CircuitBreaker {
     }
 
     protected boolean fromOpenToHalfOpen(Context context) {
+        //open->half open
         if (currentState.compareAndSet(State.OPEN, State.HALF_OPEN)) {
+            //通知观察者
             notifyObservers(State.OPEN, State.HALF_OPEN, null);
             Entry entry = context.getCurEntry();
             entry.whenTerminate(new BiConsumer<Context, Entry>() {
                 @Override
                 public void accept(Context context, Entry entry) {
-                    // Note: This works as a temporary workaround for https://github.com/alibaba/Sentinel/issues/1638
-                    // Without the hook, the circuit breaker won't recover from half-open state in some circumstances
-                    // when the request is actually blocked by upcoming rules (not only degrade rules).
                     if (entry.getBlockError() != null) {
-                        // Fallback to OPEN due to detecting request is blocked
+                        //如果异常了，要改回来
                         currentState.compareAndSet(State.HALF_OPEN, State.OPEN);
+                        //通知观察者
                         notifyObservers(State.HALF_OPEN, State.OPEN, 1.0d);
                     }
                 }

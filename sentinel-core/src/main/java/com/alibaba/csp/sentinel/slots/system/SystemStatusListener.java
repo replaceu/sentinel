@@ -30,71 +30,63 @@ import com.sun.management.OperatingSystemMXBean;
  */
 public class SystemStatusListener implements Runnable {
 
-    volatile double currentLoad = -1;
-    volatile double currentCpuUsage = -1;
+	volatile double	currentLoad		= -1;
+	volatile double	currentCpuUsage	= -1;
 
-    volatile String reason = StringUtil.EMPTY;
+	volatile String reason = StringUtil.EMPTY;
 
-    volatile long processCpuTime = 0;
-    volatile long processUpTime = 0;
+	volatile long	processCpuTime	= 0;
+	volatile long	processUpTime	= 0;
 
-    public double getSystemAverageLoad() {
-        return currentLoad;
-    }
+	public double getSystemAverageLoad() {
+		return currentLoad;
+	}
 
-    public double getCpuUsage() {
-        return currentCpuUsage;
-    }
+	public double getCpuUsage() {
+		return currentCpuUsage;
+	}
 
-    @Override
-    public void run() {
-        try {
-            OperatingSystemMXBean osBean = ManagementFactory.getPlatformMXBean(OperatingSystemMXBean.class);
-            currentLoad = osBean.getSystemLoadAverage();
+	@Override
+	public void run() {
+		try {
+			//获取操作系统的信息
+			OperatingSystemMXBean osBean = ManagementFactory.getPlatformMXBean(OperatingSystemMXBean.class);
+			//系统的平均负载
+			currentLoad = osBean.getSystemLoadAverage();
 
-            /*
-             * Java Doc copied from {@link OperatingSystemMXBean#getSystemCpuLoad()}:</br>
-             * Returns the "recent cpu usage" for the whole system. This value is a double in the [0.0,1.0] interval.
-             * A value of 0.0 means that all CPUs were idle during the recent period of time observed, while a value
-             * of 1.0 means that all CPUs were actively running 100% of the time during the recent period being
-             * observed. All values between 0.0 and 1.0 are possible depending of the activities going on in the
-             * system. If the system recent cpu usage is not available, the method returns a negative value.
-             */
-            double systemCpuUsage = osBean.getSystemCpuLoad();
+			double systemCpuUsage = osBean.getSystemCpuLoad();
 
-            // calculate process cpu usage to support application running in container environment
-            RuntimeMXBean runtimeBean = ManagementFactory.getPlatformMXBean(RuntimeMXBean.class);
-            long newProcessCpuTime = osBean.getProcessCpuTime();
-            long newProcessUpTime = runtimeBean.getUptime();
-            int cpuCores = osBean.getAvailableProcessors();
-            long processCpuTimeDiffInMs = TimeUnit.NANOSECONDS
-                    .toMillis(newProcessCpuTime - processCpuTime);
-            long processUpTimeDiffInMs = newProcessUpTime - processUpTime;
-            double processCpuUsage = (double) processCpuTimeDiffInMs / processUpTimeDiffInMs / cpuCores;
-            processCpuTime = newProcessCpuTime;
-            processUpTime = newProcessUpTime;
+			RuntimeMXBean runtimeBean = ManagementFactory.getPlatformMXBean(RuntimeMXBean.class);
+			long newProcessCpuTime = osBean.getProcessCpuTime();
+			long newProcessUpTime = runtimeBean.getUptime();
+			int cpuCores = osBean.getAvailableProcessors();
+			long processCpuTimeDiffInMs = TimeUnit.NANOSECONDS.toMillis(newProcessCpuTime - processCpuTime);
+			long processUpTimeDiffInMs = newProcessUpTime - processUpTime;
+			double processCpuUsage = (double) processCpuTimeDiffInMs / processUpTimeDiffInMs / cpuCores;
+			processCpuTime = newProcessCpuTime;
+			processUpTime = newProcessUpTime;
+			//当前CPU的负载
+			currentCpuUsage = Math.max(processCpuUsage, systemCpuUsage);
 
-            currentCpuUsage = Math.max(processCpuUsage, systemCpuUsage);
+			if (currentLoad > SystemRuleManager.getSystemLoadThreshold()) {
+				writeSystemStatusLog();
+			}
+		} catch (Throwable e) {
+			RecordLog.warn("[SystemStatusListener] Failed to get system metrics from JMX", e);
+		}
+	}
 
-            if (currentLoad > SystemRuleManager.getSystemLoadThreshold()) {
-                writeSystemStatusLog();
-            }
-        } catch (Throwable e) {
-            RecordLog.warn("[SystemStatusListener] Failed to get system metrics from JMX", e);
-        }
-    }
-
-    private void writeSystemStatusLog() {
-        StringBuilder sb = new StringBuilder();
-        sb.append("Load exceeds the threshold: ");
-        sb.append("load:").append(String.format("%.4f", currentLoad)).append("; ");
-        sb.append("cpuUsage:").append(String.format("%.4f", currentCpuUsage)).append("; ");
-        sb.append("qps:").append(String.format("%.4f", Constants.ENTRY_NODE.passQps())).append("; ");
-        sb.append("rt:").append(String.format("%.4f", Constants.ENTRY_NODE.avgRt())).append("; ");
-        sb.append("thread:").append(Constants.ENTRY_NODE.curThreadNum()).append("; ");
-        sb.append("success:").append(String.format("%.4f", Constants.ENTRY_NODE.successQps())).append("; ");
-        sb.append("minRt:").append(String.format("%.2f", Constants.ENTRY_NODE.minRt())).append("; ");
-        sb.append("maxSuccess:").append(String.format("%.2f", Constants.ENTRY_NODE.maxSuccessQps())).append("; ");
-        RecordLog.info(sb.toString());
-    }
+	private void writeSystemStatusLog() {
+		StringBuilder sb = new StringBuilder();
+		sb.append("Load exceeds the threshold: ");
+		sb.append("load:").append(String.format("%.4f", currentLoad)).append("; ");
+		sb.append("cpuUsage:").append(String.format("%.4f", currentCpuUsage)).append("; ");
+		sb.append("qps:").append(String.format("%.4f", Constants.ENTRY_NODE.passQps())).append("; ");
+		sb.append("rt:").append(String.format("%.4f", Constants.ENTRY_NODE.avgRt())).append("; ");
+		sb.append("thread:").append(Constants.ENTRY_NODE.curThreadNum()).append("; ");
+		sb.append("success:").append(String.format("%.4f", Constants.ENTRY_NODE.successQps())).append("; ");
+		sb.append("minRt:").append(String.format("%.2f", Constants.ENTRY_NODE.minRt())).append("; ");
+		sb.append("maxSuccess:").append(String.format("%.2f", Constants.ENTRY_NODE.maxSuccessQps())).append("; ");
+		RecordLog.info(sb.toString());
+	}
 }

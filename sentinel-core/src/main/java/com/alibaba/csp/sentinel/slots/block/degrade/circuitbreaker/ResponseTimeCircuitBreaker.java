@@ -33,138 +33,139 @@ import com.alibaba.csp.sentinel.util.TimeUtil;
  */
 public class ResponseTimeCircuitBreaker extends AbstractCircuitBreaker {
 
-    private static final double SLOW_REQUEST_RATIO_MAX_VALUE = 1.0d;
+	private static final double SLOW_REQUEST_RATIO_MAX_VALUE = 1.0d;
 
-    private final long maxAllowedRt;
-    private final double maxSlowRequestRatio;
-    private final int minRequestAmount;
+	private final long		maxAllowedRt;
+	private final double	maxSlowRequestRatio;
+	private final int		minRequestAmount;
 
-    private final LeapArray<SlowRequestCounter> slidingCounter;
+	private final LeapArray<SlowRequestCounter> slidingCounter;
 
-    public ResponseTimeCircuitBreaker(DegradeRule rule) {
-        this(rule, new SlowRequestLeapArray(1, rule.getStatIntervalMs()));
-    }
+	public ResponseTimeCircuitBreaker(DegradeRule rule) {
+		this(rule, new SlowRequestLeapArray(1, rule.getStatIntervalMs()));
+	}
 
-    ResponseTimeCircuitBreaker(DegradeRule rule, LeapArray<SlowRequestCounter> stat) {
-        super(rule);
-        AssertUtil.isTrue(rule.getGrade() == RuleConstant.DEGRADE_GRADE_RT, "rule metric type should be RT");
-        AssertUtil.notNull(stat, "stat cannot be null");
-        this.maxAllowedRt = Math.round(rule.getCount());
-        this.maxSlowRequestRatio = rule.getSlowRatioThreshold();
-        this.minRequestAmount = rule.getMinRequestAmount();
-        this.slidingCounter = stat;
-    }
+	ResponseTimeCircuitBreaker(DegradeRule rule, LeapArray<SlowRequestCounter> stat) {
+		super(rule);
+		AssertUtil.isTrue(rule.getGrade() == RuleConstant.DEGRADE_GRADE_RT, "rule metric type should be RT");
+		AssertUtil.notNull(stat, "stat cannot be null");
+		this.maxAllowedRt = Math.round(rule.getCount());
+		this.maxSlowRequestRatio = rule.getSlowRatioThreshold();
+		this.minRequestAmount = rule.getMinRequestAmount();
+		this.slidingCounter = stat;
+	}
 
-    @Override
-    public void resetStat() {
-        // Reset current bucket (bucket count = 1).
-        slidingCounter.currentWindow().value().reset();
-    }
+	@Override
+	public void resetStat() {
+		// Reset current bucket (bucket count = 1).
+		slidingCounter.currentWindow().value().reset();
+	}
 
-    @Override
-    public void onRequestComplete(Context context) {
-        SlowRequestCounter counter = slidingCounter.currentWindow().value();
-        Entry entry = context.getCurEntry();
-        if (entry == null) {
-            return;
-        }
-        long completeTime = entry.getCompleteTimestamp();
-        if (completeTime <= 0) {
-            completeTime = TimeUtil.currentTimeMillis();
-        }
-        long rt = completeTime - entry.getCreateTimestamp();
-        if (rt > maxAllowedRt) {
-            counter.slowCount.add(1);
-        }
-        counter.totalCount.add(1);
+	@Override
+	public void onRequestComplete(Context context) {
+		//取得当前滑动窗口
+		SlowRequestCounter counter = slidingCounter.currentWindow().value();
+		Entry entry = context.getCurEntry();
+		if (entry == null) { return; }
+		//请求完成时间
+		long completeTime = entry.getCompleteTimestamp();
+		if (completeTime <= 0) {
+			completeTime = TimeUtil.currentTimeMillis();
+		}
+		//请求响应时间
+		long rt = completeTime - entry.getCreateTimestamp();
+		//请求响应时间大于最大响应时间，慢调用数加1
+		if (rt > maxAllowedRt) {
+			counter.slowCount.add(1);
+		}
+		//总的请求加1
+		counter.totalCount.add(1);
 
-        handleStateChangeWhenThresholdExceeded(rt);
-    }
+		handleStateChangeWhenThresholdExceeded(rt);
+	}
 
-    private void handleStateChangeWhenThresholdExceeded(long rt) {
-        if (currentState.get() == State.OPEN) {
-            return;
-        }
-        
-        if (currentState.get() == State.HALF_OPEN) {
-            // In detecting request
-            // TODO: improve logic for half-open recovery
-            if (rt > maxAllowedRt) {
-                fromHalfOpenToOpen(1.0d);
-            } else {
-                fromHalfOpenToClose();
-            }
-            return;
-        }
+	private void handleStateChangeWhenThresholdExceeded(long rt) {
+		//open直接返回，已经有其他请求触发熔断降级了
+		if (currentState.get() == State.OPEN) { return; }
 
-        List<SlowRequestCounter> counters = slidingCounter.values();
-        long slowCount = 0;
-        long totalCount = 0;
-        for (SlowRequestCounter counter : counters) {
-            slowCount += counter.slowCount.sum();
-            totalCount += counter.totalCount.sum();
-        }
-        if (totalCount < minRequestAmount) {
-            return;
-        }
-        double currentRatio = slowCount * 1.0d / totalCount;
-        if (currentRatio > maxSlowRequestRatio) {
-            transformToOpen(currentRatio);
-        }
-        if (Double.compare(currentRatio, maxSlowRequestRatio) == 0 &&
-                Double.compare(maxSlowRequestRatio, SLOW_REQUEST_RATIO_MAX_VALUE) == 0) {
-            transformToOpen(currentRatio);
-        }
-    }
+		if (currentState.get() == State.HALF_OPEN) {
+			//half_open放了一个请求进来
+			if (rt > maxAllowedRt) {
+				//half-open->open
+				fromHalfOpenToOpen(1.0d);
+			} else {
+				//half-open->close
+				fromHalfOpenToClose();
+			}
+			//如果是close就直接返回
+			return;
+		}
 
-    static class SlowRequestCounter {
-        private LongAdder slowCount;
-        private LongAdder totalCount;
+		List<SlowRequestCounter> counters = slidingCounter.values();
+		long slowCount = 0;//慢请求数
+		long totalCount = 0;//总请求数
+		for (SlowRequestCounter counter : counters) {
+			slowCount += counter.slowCount.sum();
+			totalCount += counter.totalCount.sum();
+		}
+		//总请求数小于最小请求数，直接返回，不熔断
+		if (totalCount < minRequestAmount) { return; }
+		double currentRatio = slowCount * 1.0d / totalCount;
+		//当前慢请求比例 > 最大慢请求比例
+		if (currentRatio > maxSlowRequestRatio) {
+			transformToOpen(currentRatio);
+		}
+		if (Double.compare(currentRatio, maxSlowRequestRatio) == 0 && Double.compare(maxSlowRequestRatio, SLOW_REQUEST_RATIO_MAX_VALUE) == 0) {
+			//当前慢请求比例 = 最大慢请求比例 = 1.0
+			transformToOpen(currentRatio);
+		}
+	}
 
-        public SlowRequestCounter() {
-            this.slowCount = new LongAdder();
-            this.totalCount = new LongAdder();
-        }
+	static class SlowRequestCounter {
+		private LongAdder	slowCount;
+		private LongAdder	totalCount;
 
-        public LongAdder getSlowCount() {
-            return slowCount;
-        }
+		public SlowRequestCounter() {
+			this.slowCount = new LongAdder();
+			this.totalCount = new LongAdder();
+		}
 
-        public LongAdder getTotalCount() {
-            return totalCount;
-        }
+		public LongAdder getSlowCount() {
+			return slowCount;
+		}
 
-        public SlowRequestCounter reset() {
-            slowCount.reset();
-            totalCount.reset();
-            return this;
-        }
+		public LongAdder getTotalCount() {
+			return totalCount;
+		}
 
-        @Override
-        public String toString() {
-            return "SlowRequestCounter{" +
-                "slowCount=" + slowCount +
-                ", totalCount=" + totalCount +
-                '}';
-        }
-    }
+		public SlowRequestCounter reset() {
+			slowCount.reset();
+			totalCount.reset();
+			return this;
+		}
 
-    static class SlowRequestLeapArray extends LeapArray<SlowRequestCounter> {
+		@Override
+		public String toString() {
+			return "SlowRequestCounter{" + "slowCount=" + slowCount + ", totalCount=" + totalCount + '}';
+		}
+	}
 
-        public SlowRequestLeapArray(int sampleCount, int intervalInMs) {
-            super(sampleCount, intervalInMs);
-        }
+	static class SlowRequestLeapArray extends LeapArray<SlowRequestCounter> {
 
-        @Override
-        public SlowRequestCounter newEmptyBucket(long timeMillis) {
-            return new SlowRequestCounter();
-        }
+		public SlowRequestLeapArray(int sampleCount, int intervalInMs) {
+			super(sampleCount, intervalInMs);
+		}
 
-        @Override
-        protected WindowWrap<SlowRequestCounter> resetWindowTo(WindowWrap<SlowRequestCounter> w, long startTime) {
-            w.resetTo(startTime);
-            w.value().reset();
-            return w;
-        }
-    }
+		@Override
+		public SlowRequestCounter newEmptyBucket(long timeMillis) {
+			return new SlowRequestCounter();
+		}
+
+		@Override
+		protected WindowWrap<SlowRequestCounter> resetWindowTo(WindowWrap<SlowRequestCounter> w, long startTime) {
+			w.resetTo(startTime);
+			w.value().reset();
+			return w;
+		}
+	}
 }

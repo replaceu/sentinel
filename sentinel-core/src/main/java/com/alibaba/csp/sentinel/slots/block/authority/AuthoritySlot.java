@@ -26,43 +26,32 @@ import com.alibaba.csp.sentinel.slotchain.ProcessorSlot;
 import com.alibaba.csp.sentinel.slotchain.ResourceWrapper;
 import com.alibaba.csp.sentinel.spi.Spi;
 
-/**
- * A {@link ProcessorSlot} that dedicates to {@link AuthorityRule} checking.
- *
- * @author leyou
- * @author Eric Zhao
- */
+//根据配置的黑白名单和调用来源信息，来做黑白名单控制
 @Spi(order = Constants.ORDER_AUTHORITY_SLOT)
 public class AuthoritySlot extends AbstractLinkedProcessorSlot<DefaultNode> {
+	//在调用目标方法之前进行校验是否在黑白名单内
+	@Override
+	public void entry(Context context, ResourceWrapper resourceWrapper, DefaultNode node, int count, boolean prioritized, Object... args) throws Throwable {
+		checkBlackWhiteAuthority(resourceWrapper, context);
+		fireEntry(context, resourceWrapper, node, count, prioritized, args);
+	}
 
-    @Override
-    public void entry(Context context, ResourceWrapper resourceWrapper, DefaultNode node, int count, boolean prioritized, Object... args)
-        throws Throwable {
-        checkBlackWhiteAuthority(resourceWrapper, context);
-        fireEntry(context, resourceWrapper, node, count, prioritized, args);
-    }
+	@Override
+	public void exit(Context context, ResourceWrapper resourceWrapper, int count, Object... args) {
+		fireExit(context, resourceWrapper, count, args);
+	}
 
-    @Override
-    public void exit(Context context, ResourceWrapper resourceWrapper, int count, Object... args) {
-        fireExit(context, resourceWrapper, count, args);
-    }
-
-    void checkBlackWhiteAuthority(ResourceWrapper resource, Context context) throws AuthorityException {
-        Map<String, Set<AuthorityRule>> authorityRules = AuthorityRuleManager.getAuthorityRules();
-
-        if (authorityRules == null) {
-            return;
-        }
-
-        Set<AuthorityRule> rules = authorityRules.get(resource.getName());
-        if (rules == null) {
-            return;
-        }
-
-        for (AuthorityRule rule : rules) {
-            if (!AuthorityRuleChecker.passCheck(rule, context)) {
-                throw new AuthorityException(context.getOrigin(), rule);
-            }
-        }
-    }
+	void checkBlackWhiteAuthority(ResourceWrapper resource, Context context) throws AuthorityException {
+		//获取通过AuthorityRuleManager.loadRules()加载的授权规则
+		Map<String, Set<AuthorityRule>> authorityRules = AuthorityRuleManager.getAuthorityRules();
+		//如果授权规则为空，则直接返回
+		if (authorityRules == null) { return; }
+		//根据资源名查找授权规则
+		Set<AuthorityRule> rules = authorityRules.get(resource.getName());
+		if (rules == null) { return; }
+		for (AuthorityRule rule : rules) {
+			//遍历所有的授权规则，逐条校验，如果有一条规则不通过，则抛出AuthorityException，AuthorityException是BlockException的子类
+			if (!AuthorityRuleChecker.passCheck(rule, context)) { throw new AuthorityException(context.getOrigin(), rule); }
+		}
+	}
 }

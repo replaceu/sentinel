@@ -124,58 +124,41 @@ import java.util.Map;
  * @see EntranceNode
  * @see ContextUtil
  */
+
+//负责收集资源的路径，并将这些资源的调用路径，以树状结构存储起来，用于根据调用链路来限流降级
 @Spi(isSingleton = false, order = Constants.ORDER_NODE_SELECTOR_SLOT)
 public class NodeSelectorSlot extends AbstractLinkedProcessorSlot<Object> {
+	private volatile Map<String, DefaultNode> map = new HashMap<String, DefaultNode>(10);
 
-    /**
-     * {@link DefaultNode}s of the same resource in different context.
-     */
-    private volatile Map<String, DefaultNode> map = new HashMap<String, DefaultNode>(10);
+	@Override
+	public void entry(Context context, ResourceWrapper resourceWrapper, Object obj, int count, boolean prioritized, Object... args) throws Throwable {
+		//这里是根据context name获取DefaultNode，而不是根据resource name获取
+		DefaultNode node = map.get(context.getName());
+		if (node == null) {
+			synchronized (this) {
+				node = map.get(context.getName());
+				if (node == null) {
+					//根据资源创建DefaultNode
+					node = new DefaultNode(resourceWrapper, null);
+					//将DefaultNode放入map中，采用CopyOnWrite保证线程安全
+					//相当于 map.put(context.getName(), node);
+					HashMap<String, DefaultNode> cacheMap = new HashMap<String, DefaultNode>(map.size());
+					cacheMap.putAll(map);
+					cacheMap.put(context.getName(), node);
+					map = cacheMap;
+					// 构建调用链树
+					((DefaultNode) context.getLastNode()).addChild(node);
+				}
 
-    @Override
-    public void entry(Context context, ResourceWrapper resourceWrapper, Object obj, int count, boolean prioritized, Object... args)
-        throws Throwable {
-        /*
-         * It's interesting that we use context name rather resource name as the map key.
-         *
-         * Remember that same resource({@link ResourceWrapper#equals(Object)}) will share
-         * the same {@link ProcessorSlotChain} globally, no matter in which context. So if
-         * code goes into {@link #entry(Context, ResourceWrapper, DefaultNode, int, Object...)},
-         * the resource name must be same but context name may not.
-         *
-         * If we use {@link com.alibaba.csp.sentinel.SphU#entry(String resource)} to
-         * enter same resource in different context, using context name as map key can
-         * distinguish the same resource. In this case, multiple {@link DefaultNode}s will be created
-         * of the same resource name, for every distinct context (different context name) each.
-         *
-         * Consider another question. One resource may have multiple {@link DefaultNode},
-         * so what is the fastest way to get total statistics of the same resource?
-         * The answer is all {@link DefaultNode}s with same resource name share one
-         * {@link ClusterNode}. See {@link ClusterBuilderSlot} for detail.
-         */
-        DefaultNode node = map.get(context.getName());
-        if (node == null) {
-            synchronized (this) {
-                node = map.get(context.getName());
-                if (node == null) {
-                    node = new DefaultNode(resourceWrapper, null);
-                    HashMap<String, DefaultNode> cacheMap = new HashMap<String, DefaultNode>(map.size());
-                    cacheMap.putAll(map);
-                    cacheMap.put(context.getName(), node);
-                    map = cacheMap;
-                    // Build invocation tree
-                    ((DefaultNode) context.getLastNode()).addChild(node);
-                }
+			}
+		}
+		//设置当前Node
+		context.setCurNode(node);
+		fireEntry(context, resourceWrapper, node, count, prioritized, args);
+	}
 
-            }
-        }
-
-        context.setCurNode(node);
-        fireEntry(context, resourceWrapper, node, count, prioritized, args);
-    }
-
-    @Override
-    public void exit(Context context, ResourceWrapper resourceWrapper, int count, Object... args) {
-        fireExit(context, resourceWrapper, count, args);
-    }
+	@Override
+	public void exit(Context context, ResourceWrapper resourceWrapper, int count, Object... args) {
+		fireExit(context, resourceWrapper, count, args);
+	}
 }

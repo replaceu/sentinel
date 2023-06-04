@@ -32,37 +32,7 @@ import com.alibaba.csp.sentinel.property.SimplePropertyListener;
 import com.alibaba.csp.sentinel.slotchain.ResourceWrapper;
 import com.alibaba.csp.sentinel.slots.block.BlockException;
 
-/**
- * <p>
- * Sentinel System Rule makes the inbound traffic and capacity meet. It takes
- * average rt, qps, thread count of incoming requests into account. And it also
- * provides a measurement of system's load, but only available on Linux.
- * </p>
- * <p>
- * rt, qps, thread count is easy to understand. If the incoming requests'
- * rt,qps, thread count exceeds its threshold, the requests will be
- * rejected.however, we use a different method to calculate the load.
- * </p>
- * <p>
- * Consider the system as a pipeline，transitions between constraints result in
- * three different regions (traffic-limited, capacity-limited and danger area)
- * with qualitatively different behavior. When there isn’t enough request in
- * flight to fill the pipe, RTprop determines behavior; otherwise, the system
- * capacity dominates. Constraint lines intersect at inflight = Capacity ×
- * RTprop. Since the pipe is full past this point, the inflight –capacity excess
- * creates a queue, which results in the linear dependence of RTT on inflight
- * traffic and an increase in system load.In danger area, system will stop
- * responding.<br/>
- * Referring to BBR algorithm to learn more.
- * </p>
- * <p>
- * Note that {@link SystemRule} only effect on inbound requests, outbound traffic
- * will not limit by {@link SystemRule}
- * </p>
- *
- * @author jialiang.linjl
- * @author leyou
- */
+
 public final class SystemRuleManager {
 
     private static volatile double highestSystemLoad = Double.MAX_VALUE;
@@ -92,6 +62,7 @@ public final class SystemRuleManager {
     private final static ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1,
         new NamedThreadFactory("sentinel-system-status-record-task", true));
 
+    //静态代码块会启动一个线程池每秒执行SystemStatusListener任务
     static {
         checkSystemStatus.set(false);
         statusListener = new SystemStatusListener();
@@ -99,12 +70,6 @@ public final class SystemRuleManager {
         currentProperty.addListener(listener);
     }
 
-    /**
-     * Listen to the {@link SentinelProperty} for {@link SystemRule}s. The property is the source
-     * of {@link SystemRule}s. System rules can also be set by {@link #loadRules(List)} directly.
-     *
-     * @param property the property to listen.
-     */
     public static void register2Property(SentinelProperty<List<SystemRule>> property) {
         synchronized (listener) {
             RecordLog.info("[SystemRuleManager] Registering new property to system rule manager");
@@ -184,10 +149,12 @@ public final class SystemRuleManager {
 
         @Override
         public synchronized void configUpdate(List<SystemRule> rules) {
+            //恢复到默认状态
             restoreSetting();
-            // systemRules = rules;
+
             if (rules != null && rules.size() >= 1) {
                 for (SystemRule rule : rules) {
+                    //加载系统规则配置
                     loadSystemConf(rule);
                 }
             } else {
@@ -209,15 +176,13 @@ public final class SystemRuleManager {
         }
 
         protected void restoreSetting() {
+            //将各个参数恢复到默认值
             checkSystemStatus.set(false);
-
-            // should restore changes
             highestSystemLoad = Double.MAX_VALUE;
             highestCpuUsage = Double.MAX_VALUE;
             maxRt = Long.MAX_VALUE;
             maxThread = Long.MAX_VALUE;
             qps = Double.MAX_VALUE;
-
             highestSystemLoadIsSet = false;
             highestCpuUsageIsSet = false;
             maxRtIsSet = false;
@@ -230,19 +195,14 @@ public final class SystemRuleManager {
     public static Boolean getCheckSystemStatus() {
         return checkSystemStatus.get();
     }
-
     public static double getSystemLoadThreshold() {
         return highestSystemLoad;
     }
-
     public static double getCpuUsageThreshold() {
         return highestCpuUsage;
     }
-
     public static void loadSystemConf(SystemRule rule) {
         boolean checkStatus = false;
-        // Check if it's valid.
-
         if (rule.getHighestSystemLoad() >= 0) {
             highestSystemLoad = Math.min(highestSystemLoad, rule.getHighestSystemLoad());
             highestSystemLoadIsSet = true;
@@ -281,59 +241,52 @@ public final class SystemRuleManager {
 
     }
 
-    /**
-     * Apply {@link SystemRule} to the resource. Only inbound traffic will be checked.
-     *
-     * @param resourceWrapper the resource.
-     * @throws BlockException when any system rule's threshold is exceeded.
-     */
+    //比较入口流量的QPS，比较入口流量的并发线程数，比较平均RT响应时间，比较CPU使用率等，判断是否需要抛出
     public static void checkSystem(ResourceWrapper resourceWrapper, int count) throws BlockException {
         if (resourceWrapper == null) {
             return;
         }
-        // Ensure the checking switch is on.
+        //如果校验未开启，则直接返回
         if (!checkSystemStatus.get()) {
             return;
         }
 
-        // for inbound traffic only
         if (resourceWrapper.getEntryType() != EntryType.IN) {
             return;
         }
 
-        // total qps
+        //所有流量入口的qps
         double currentQps = Constants.ENTRY_NODE.passQps();
         if (currentQps + count > qps) {
             throw new SystemBlockException(resourceWrapper.getName(), "qps");
         }
 
-        // total thread
+        //所有入口流量的并发线程数
         int currentThread = Constants.ENTRY_NODE.curThreadNum();
         if (currentThread > maxThread) {
             throw new SystemBlockException(resourceWrapper.getName(), "thread");
         }
-
+        //所有入口流量的平均RT响应时间
         double rt = Constants.ENTRY_NODE.avgRt();
         if (rt > maxRt) {
             throw new SystemBlockException(resourceWrapper.getName(), "rt");
         }
-
-        // load. BBR algorithm.
+        //系统load超过阈值
         if (highestSystemLoadIsSet && getCurrentSystemAvgLoad() > highestSystemLoad) {
             if (!checkBbr(currentThread)) {
                 throw new SystemBlockException(resourceWrapper.getName(), "load");
             }
         }
-
-        // cpu usage
+        //系统CPU使用率
         if (highestCpuUsageIsSet && getCurrentCpuUsage() > highestCpuUsage) {
             throw new SystemBlockException(resourceWrapper.getName(), "cpu");
         }
     }
 
     private static boolean checkBbr(int currentThread) {
-        if (currentThread > 1 &&
-            currentThread > Constants.ENTRY_NODE.maxSuccessQps() * Constants.ENTRY_NODE.minRt() / 1000) {
+        //系统当前的并发线程数超过系统容量
+        //系统容量由系统的 `maxQps*minRt`计算得出
+        if (currentThread > 1 && currentThread > Constants.ENTRY_NODE.maxSuccessQps() * Constants.ENTRY_NODE.minRt() / 1000) {
             return false;
         }
         return true;

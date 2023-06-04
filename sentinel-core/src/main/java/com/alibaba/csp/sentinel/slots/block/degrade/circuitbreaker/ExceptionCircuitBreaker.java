@@ -70,20 +70,23 @@ public class ExceptionCircuitBreaker extends AbstractCircuitBreaker {
         Throwable error = entry.getError();
         SimpleErrorCounter counter = stat.currentWindow().value();
         if (error != null) {
+            //异常数加1
             counter.getErrorCount().add(1);
         }
+        //总请求数加1
         counter.getTotalCount().add(1);
-
+        //熔断逻辑，处理熔断状态的变更
         handleStateChangeWhenThresholdExceeded(error);
     }
 
     private void handleStateChangeWhenThresholdExceeded(Throwable error) {
+        //OPEN直接返回，已经有其他请求触发熔断降级了
         if (currentState.get() == State.OPEN) {
             return;
         }
         
         if (currentState.get() == State.HALF_OPEN) {
-            // In detecting request
+            //HALF_OPEN放了一个请求进来
             if (error == null) {
                 fromHalfOpenToClose();
             } else {
@@ -93,20 +96,22 @@ public class ExceptionCircuitBreaker extends AbstractCircuitBreaker {
         }
         
         List<SimpleErrorCounter> counters = stat.values();
-        long errCount = 0;
-        long totalCount = 0;
+        long errCount = 0;//异常请求数
+        long totalCount = 0;//总请求数
         for (SimpleErrorCounter counter : counters) {
             errCount += counter.errorCount.sum();
             totalCount += counter.totalCount.sum();
         }
         if (totalCount < minRequestAmount) {
+            //总请求数小于最小请求数，直接返回
             return;
         }
         double curCount = errCount;
         if (strategy == DEGRADE_GRADE_EXCEPTION_RATIO) {
-            // Use errorRatio
+            //计算异常比例
             curCount = errCount * 1.0d / totalCount;
         }
+        //异常数大于阈值
         if (curCount > threshold) {
             transformToOpen(curCount);
         }

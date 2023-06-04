@@ -23,25 +23,20 @@ import com.alibaba.csp.sentinel.slotchain.ProcessorSlot;
 import com.alibaba.csp.sentinel.slotchain.ResourceWrapper;
 import com.alibaba.csp.sentinel.spi.Spi;
 
-/**
- * A {@link ProcessorSlot} that dedicates to {@link SystemRule} checking.
- *
- * @author jialiang.linjl
- * @author leyou
- */
+//通过系统的状态，例如load等，来控制总的入口流量
+//SystemSlot的逻辑主要是在请求目标方法之前调用SystemRuleManager.checkSystem校验是否让请求通过
 @Spi(order = Constants.ORDER_SYSTEM_SLOT)
 public class SystemSlot extends AbstractLinkedProcessorSlot<DefaultNode> {
 
-    @Override
-    public void entry(Context context, ResourceWrapper resourceWrapper, DefaultNode node, int count,
-                      boolean prioritized, Object... args) throws Throwable {
-        SystemRuleManager.checkSystem(resourceWrapper, count);
-        fireEntry(context, resourceWrapper, node, count, prioritized, args);
-    }
+	@Override
+	public void entry(Context context, ResourceWrapper resourceWrapper, DefaultNode node, int count, boolean prioritized, Object... args) throws Throwable {
+		SystemRuleManager.checkSystem(resourceWrapper, count);
+		fireEntry(context, resourceWrapper, node, count, prioritized, args);
+	}
 
-    @Override
-    public void exit(Context context, ResourceWrapper resourceWrapper, int count, Object... args) {
-        fireExit(context, resourceWrapper, count, args);
-    }
+	@Override
+	public void exit(Context context, ResourceWrapper resourceWrapper, int count, Object... args) {
+		fireExit(context, resourceWrapper, count, args);
+	}
 
 }

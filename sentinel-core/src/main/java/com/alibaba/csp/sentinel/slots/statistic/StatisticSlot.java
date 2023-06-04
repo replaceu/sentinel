@@ -32,22 +32,7 @@ import com.alibaba.csp.sentinel.slotchain.AbstractLinkedProcessorSlot;
 import com.alibaba.csp.sentinel.slotchain.ResourceWrapper;
 import com.alibaba.csp.sentinel.slots.block.BlockException;
 
-/**
- * <p>
- * A processor slot that dedicates to real time statistics.
- * When entering this slot, we need to separately count the following
- * information:
- * <ul>
- * <li>{@link ClusterNode}: total statistics of a cluster node of the resource ID.</li>
- * <li>Origin node: statistics of a cluster node from different callers/origins.</li>
- * <li>{@link DefaultNode}: statistics for specific resource name in the specific context.</li>
- * <li>Finally, the sum statistics of all entrances.</li>
- * </ul>
- * </p>
- *
- * @author jialiang.linjl
- * @author Eric Zhao
- */
+//用于记录、统计不同维度的runtime指标监控信息
 @Spi(order = Constants.ORDER_STATISTIC_SLOT)
 public class StatisticSlot extends AbstractLinkedProcessorSlot<DefaultNode> {
 

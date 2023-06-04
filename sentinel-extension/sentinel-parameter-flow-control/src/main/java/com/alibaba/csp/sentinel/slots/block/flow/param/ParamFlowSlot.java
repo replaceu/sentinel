@@ -24,13 +24,7 @@ import com.alibaba.csp.sentinel.spi.Spi;
 
 import java.util.List;
 
-/**
- * A processor slot that is responsible for flow control by frequent ("hot spot") parameters.
- *
- * @author jialiang.linjl
- * @author Eric Zhao
- * @since 0.2.0
- */
+//统计热点参数的调用量，并依据这些统计信息进行热点参数限流
 @Spi(order = -3000)
 public class ParamFlowSlot extends AbstractLinkedProcessorSlot<DefaultNode> {
 
